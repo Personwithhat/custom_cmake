@@ -204,6 +204,9 @@ bool cmExecuteProcessCommand::InitialPass(std::vector<std::string> const& args,
   // Always hide the process window.
   cmsysProcess_SetOption(cp, cmsysProcess_Option_HideWindow, 1);
 
+  // Make sure this process is in another process group for interrupts.
+  cmsysProcess_SetOption(cp, cmsysProcess_Option_CreateProcessGroup, 1);
+
   // Check the output variables.
   bool merge_output = false;
   if (!input_file.empty()) {
@@ -239,12 +242,14 @@ bool cmExecuteProcessCommand::InitialPass(std::vector<std::string> const& args,
   // Read the process output.
   std::vector<char> tempOutput;
   std::vector<char> tempError;
+  #define default_time 1
+  double pingTime = default_time; // Check if interrupt flag has been set once per second.
   int length;
   char* data;
   int p;
   cmProcessOutput processOutput(encoding);
   std::string strdata;
-  while ((p = cmsysProcess_WaitForData(cp, &data, &length, nullptr), p)) {
+  while ((p = cmsysProcess_WaitForData(cp, &data, &length, &pingTime), p)) {
     // Put the output in the right place.
     if (p == cmsysProcess_Pipe_STDOUT && !output_quiet) {
       if (output_variable.empty()) {
@@ -260,7 +265,14 @@ bool cmExecuteProcessCommand::InitialPass(std::vector<std::string> const& args,
       } else {
         cmExecuteProcessCommandAppend(tempError, data, length);
       }
-    }
+    } else if (p == cmsysProcess_Pipe_Timeout) {
+		// Make sure to interrupt the process if we're stopping config/gen.
+		if(cmSystemTools::GetInterruptFlag()){
+			cmsysProcess_Kill(cp);
+			break;
+		}
+		pingTime = default_time;
+	}
   }
   if (!output_quiet && output_variable.empty()) {
     processOutput.DecodeText(std::string(), strdata, 1);
@@ -276,7 +288,15 @@ bool cmExecuteProcessCommand::InitialPass(std::vector<std::string> const& args,
   }
 
   // All output has been read.  Wait for the process to exit.
-  cmsysProcess_WaitForExit(cp, nullptr);
+  pingTime = default_time;
+  while ((p = cmsysProcess_WaitForExit(cp, &pingTime), !p)) {
+	if (cmSystemTools::GetInterruptFlag()) {
+		cmsysProcess_Kill(cp);
+		cmsysProcess_WaitForExit(cp, nullptr);
+		break;
+	}
+	pingTime = default_time;
+  }
   processOutput.DecodeText(tempOutput, tempOutput);
   processOutput.DecodeText(tempError, tempError);
 
@@ -408,3 +428,5 @@ void cmExecuteProcessCommandAppend(std::vector<char>& output, const char* data,
 #endif
   output.insert(output.end(), data, data + length);
 }
+
+#undef default_time
