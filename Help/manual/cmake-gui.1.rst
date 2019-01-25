@@ -10,6 +10,7 @@ Synopsis
 
  cmake-gui [<options>]
  cmake-gui [<options>] {<path-to-source> | <path-to-existing-build>}
+ cmake-gui [<options>] -S <path-to-source> -B <path-to-build>
 
 Description
 ===========
