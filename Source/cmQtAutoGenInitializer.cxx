@@ -226,10 +226,6 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
 	  }
   }
 
-  // Autogen target name
-  this->AutogenTarget.Name = this->Target->GetName();
-  this->AutogenTarget.Name += "_autogen";
-
   // Common directories
   {
     // Collapsed current binary directory
@@ -240,7 +236,8 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     this->Dir.Info = cbd;
     this->Dir.Info += makefile->GetCMakeInstance()->GetCMakeFilesDirectory();
     this->Dir.Info += '/';
-    this->Dir.Info += this->AutogenTarget.Name;
+	this->Dir.Info += this->Target->GetName();
+	this->Dir.Info += "_autogen";
     this->Dir.Info += ".dir";
     cmSystemTools::ConvertToUnixSlashes(this->Dir.Info);
 
@@ -249,9 +246,12 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     if (this->Dir.Build.empty()) {
       this->Dir.Build = cbd;
       this->Dir.Build += '/';
-      this->Dir.Build += this->AutogenTarget.Name;
+	  this->Dir.Build += this->Target->GetName();
+	  this->Dir.Build += "_autogen";
     }
     cmSystemTools::ConvertToUnixSlashes(this->Dir.Build);
+	// Cleanup build directory
+	AddCleanFile(makefile, this->Dir.Build);
 
     // Working directory
     this->Dir.Work = cbd;
@@ -274,6 +274,11 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     }
   }
 
+
+  // Autogen target name
+  this->AutogenTarget.Name = this->Target->GetName();
+  this->AutogenTarget.Name += "_autogen";
+
   // Autogen target parallel processing
   this->AutogenTarget.Parallel =
 	  this->Target->GetSafeProperty("AUTOGEN_PARALLEL");
@@ -291,8 +296,6 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     this->AutogenTarget.SettingsFile = this->Dir.Info;
     this->AutogenTarget.SettingsFile += "/AutogenOldSettings.txt";
 
-  // Remove build directories on cleanup
-  AddCleanFile(makefile, this->Dir.Build);
       if (this->MultiConfig) {
         for (std::string const& cfg : this->ConfigsList) {
           std::string& filename = this->AutogenTarget.ConfigSettingsFile[cfg];
@@ -353,9 +356,7 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
   }
 
 
-  // Extract relevant source files
-  std::vector<std::string> generatedSources;
-  std::vector<std::string> generatedHeaders;
+
   {
     std::string const qrcExt = "qrc";
     std::vector<cmSourceFile*> srcFiles;
