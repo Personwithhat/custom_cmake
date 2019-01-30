@@ -209,6 +209,23 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     }
   }
 
+  // Targets FOLDER
+  {
+	  const char* folder =
+		  makefile->GetState()->GetGlobalProperty("AUTOMOC_TARGETS_FOLDER");
+	  if (folder == nullptr) {
+		  folder =
+			  makefile->GetState()->GetGlobalProperty("AUTOGEN_TARGETS_FOLDER");
+	  }
+	  // Inherit FOLDER property from target (#13688)
+	  if (folder == nullptr) {
+		  folder = this->Target->GetProperty("FOLDER");
+	  }
+	  if (folder != nullptr) {
+		  this->TargetsFolder = folder;
+	  }
+  }
+
   // Autogen target parallel processing
   this->AutogenTarget.Parallel =
 	  this->Target->GetSafeProperty("AUTOGEN_PARALLEL");
@@ -266,7 +283,7 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     }
   }
 
-  // Autogen files
+  // Autogen target info and settings files
   {
     this->AutogenTarget.InfoFile = this->Dir.Info;
     this->AutogenTarget.InfoFile += "/AutogenInfo.cmake";
@@ -275,44 +292,46 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     this->AutogenTarget.SettingsFile += "/AutogenOldSettings.txt";
   }
 
-  // Autogen target FOLDER property
-  {
-    const char* folder =
-      makefile->GetState()->GetGlobalProperty("AUTOMOC_TARGETS_FOLDER");
-    if (folder == nullptr) {
-      folder =
-        makefile->GetState()->GetGlobalProperty("AUTOGEN_TARGETS_FOLDER");
-    }
-    // Inherit FOLDER property from target (#13688)
-    if (folder == nullptr) {
-      folder = this->Target->GetProperty("FOLDER");
-    }
-    if (folder != nullptr) {
-      this->TargetsFolder = folder;
-    }
-  }
-
   std::set<std::string> autogenDependFiles;
   std::set<cmTarget*> autogenDependTargets;
   std::vector<std::string> autogenProvides;
 
   // Remove build directories on cleanup
   AddCleanFile(makefile, this->Dir.Build);
+
   // Remove old settings on cleanup
   {
     std::string base = this->Dir.Info;
     base += "/AutogenOldSettings";
-    if (this->MultiConfig) {
-      for (std::string const& cfg : this->ConfigsList) {
-        std::string filename = base;
-        filename += '_';
-        filename += cfg;
-        filename += ".cmake";
-        AddCleanFile(makefile, filename);
+      if (this->MultiConfig) {
+        for (std::string const& cfg : this->ConfigsList) {
+          std::string& filename = this->AutogenTarget.ConfigSettingsFile[cfg];
+          filename =
+            AppendFilenameSuffix(this->AutogenTarget.SettingsFile, "_" + cfg);
+          AddCleanFile(makefile, filename);
+        }
+      } else {
+        AddCleanFile(makefile, this->AutogenTarget.SettingsFile);
       }
-    } else {
-      AddCleanFile(makefile, base.append(".cmake"));
-    }
+  }
+
+  // Autogen target: Compute user defined dependencies
+  {
+      std::string const deps =
+        this->Target->GetSafeProperty("AUTOGEN_TARGET_DEPENDS");
+      if (!deps.empty()) {
+        std::vector<std::string> extraDeps;
+        cmSystemTools::ExpandListArgument(deps, extraDeps);
+        for (std::string const& depName : extraDeps) {
+          // Allow target and file dependencies
+          auto* depTarget = makefile->FindTargetToUse(depName);
+          if (depTarget != nullptr) {
+            autogenDependTargets.insert(depTarget);
+          } else {
+            autogenDependFiles.insert(depName);
+          }
+        }
+      }
   }
 
   if (this->Moc.Enabled && !InitMoc()) {
@@ -697,24 +716,6 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
 
   // Create _autogen target
   if (this->Moc.Enabled || this->Uic.Enabled) {
-    // Add user defined autogen target dependencies
-    {
-      std::string const deps =
-        this->Target->GetSafeProperty("AUTOGEN_TARGET_DEPENDS");
-      if (!deps.empty()) {
-        std::vector<std::string> extraDeps;
-        cmSystemTools::ExpandListArgument(deps, extraDeps);
-        for (std::string const& depName : extraDeps) {
-          // Allow target and file dependencies
-          auto* depTarget = makefile->FindTargetToUse(depName);
-          if (depTarget != nullptr) {
-            autogenDependTargets.insert(depTarget);
-          } else {
-            autogenDependFiles.insert(depName);
-          }
-        }
-      }
-    }
 
     // Compose target comment
     std::string autogenComment;
