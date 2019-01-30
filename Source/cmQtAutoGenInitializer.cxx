@@ -188,153 +188,166 @@ cmQtAutoGenInitializer::cmQtAutoGenInitializer(cmGeneratorTarget* target,
 
 bool cmQtAutoGenInitializer::InitCustomTargets()
 {
-  cmMakefile* makefile = this->Target->Target->GetMakefile();
-  cmLocalGenerator* localGen = this->Target->GetLocalGenerator();
-  cmGlobalGenerator* globalGen = localGen->GetGlobalGenerator();
+	cmMakefile* makefile = this->Target->Target->GetMakefile();
+	cmLocalGenerator* localGen = this->Target->GetLocalGenerator();
+	cmGlobalGenerator* globalGen = localGen->GetGlobalGenerator();
 
-  // Configurations
-  this->MultiConfig = globalGen->IsMultiConfig();
-  this->ConfigDefault = makefile->GetConfigurations(this->ConfigsList);
-  if (this->ConfigsList.empty()) {
-    this->ConfigsList.push_back(this->ConfigDefault);
-  }
+	// Configurations
+	this->MultiConfig = globalGen->IsMultiConfig();
+	this->ConfigDefault = makefile->GetConfigurations(this->ConfigsList);
+	if (this->ConfigsList.empty()) {
+		this->ConfigsList.push_back(this->ConfigDefault);
+	}
 
-  // Verbosity
-  this->Verbosity = makefile->GetSafeDefinition("CMAKE_AUTOGEN_VERBOSE");
-  if (!this->Verbosity.empty()) {
-    unsigned long iVerb = 0;
-    if (!cmSystemTools::StringToULong(this->Verbosity.c_str(), &iVerb)) {
-      // Non numeric verbosity
-      this->Verbosity = cmSystemTools::IsOn(this->Verbosity) ? "1" : "0";
-    }
-  }
+	// Verbosity
+	this->Verbosity = makefile->GetSafeDefinition("CMAKE_AUTOGEN_VERBOSE");
+	if (!this->Verbosity.empty()) {
+		unsigned long iVerb = 0;
+		if (!cmSystemTools::StringToULong(this->Verbosity.c_str(), &iVerb)) {
+			// Non numeric verbosity
+			this->Verbosity = cmSystemTools::IsOn(this->Verbosity) ? "1" : "0";
+		}
+	}
 
-  // Targets FOLDER
-  {
-	  const char* folder =
-		  makefile->GetState()->GetGlobalProperty("AUTOMOC_TARGETS_FOLDER");
-	  if (folder == nullptr) {
-		  folder =
-			  makefile->GetState()->GetGlobalProperty("AUTOGEN_TARGETS_FOLDER");
-	  }
-	  // Inherit FOLDER property from target (#13688)
-	  if (folder == nullptr) {
-		  folder = this->Target->GetProperty("FOLDER");
-	  }
-	  if (folder != nullptr) {
-		  this->TargetsFolder = folder;
-	  }
-  }
+	// Targets FOLDER
+	{
+		const char* folder =
+			makefile->GetState()->GetGlobalProperty("AUTOMOC_TARGETS_FOLDER");
+		if (folder == nullptr) {
+			folder =
+				makefile->GetState()->GetGlobalProperty("AUTOGEN_TARGETS_FOLDER");
+		}
+		// Inherit FOLDER property from target (#13688)
+		if (folder == nullptr) {
+			folder = this->Target->GetProperty("FOLDER");
+		}
+		if (folder != nullptr) {
+			this->TargetsFolder = folder;
+		}
+	}
 
-  // Common directories
-  {
-    // Collapsed current binary directory
-    std::string const cbd = cmSystemTools::CollapseFullPath(
-      std::string(), makefile->GetCurrentBinaryDirectory());
+	// Common directories
+	{
+		// Collapsed current binary directory
+		std::string const cbd = cmSystemTools::CollapseFullPath(
+			std::string(), makefile->GetCurrentBinaryDirectory());
 
-    // Info directory
-    this->Dir.Info = cbd;
-    this->Dir.Info += makefile->GetCMakeInstance()->GetCMakeFilesDirectory();
-    this->Dir.Info += '/';
-	this->Dir.Info += this->Target->GetName();
-	this->Dir.Info += "_autogen";
-    this->Dir.Info += ".dir";
-    cmSystemTools::ConvertToUnixSlashes(this->Dir.Info);
+		// Info directory
+		this->Dir.Info = cbd;
+		this->Dir.Info += makefile->GetCMakeInstance()->GetCMakeFilesDirectory();
+		this->Dir.Info += '/';
+		this->Dir.Info += this->Target->GetName();
+		this->Dir.Info += "_autogen";
+		this->Dir.Info += ".dir";
+		cmSystemTools::ConvertToUnixSlashes(this->Dir.Info);
 
-    // Build directory
-    this->Dir.Build = this->Target->GetSafeProperty("AUTOGEN_BUILD_DIR");
-    if (this->Dir.Build.empty()) {
-      this->Dir.Build = cbd;
-      this->Dir.Build += '/';
-	  this->Dir.Build += this->Target->GetName();
-	  this->Dir.Build += "_autogen";
-    }
-    cmSystemTools::ConvertToUnixSlashes(this->Dir.Build);
-	// Cleanup build directory
-	AddCleanFile(makefile, this->Dir.Build);
+		// Build directory
+		this->Dir.Build = this->Target->GetSafeProperty("AUTOGEN_BUILD_DIR");
+		if (this->Dir.Build.empty()) {
+			this->Dir.Build = cbd;
+			this->Dir.Build += '/';
+			this->Dir.Build += this->Target->GetName();
+			this->Dir.Build += "_autogen";
+		}
+		cmSystemTools::ConvertToUnixSlashes(this->Dir.Build);
+		// Cleanup build directory
+		AddCleanFile(makefile, this->Dir.Build);
 
-    // Working directory
-    this->Dir.Work = cbd;
-    cmSystemTools::ConvertToUnixSlashes(this->Dir.Work);
+		// Working directory
+		this->Dir.Work = cbd;
+		cmSystemTools::ConvertToUnixSlashes(this->Dir.Work);
 
-    // Include directory
-    this->Dir.Include = this->Dir.Build;
-    this->Dir.Include += "/include";
-    if (this->MultiConfig) {
-      this->Dir.Include += "_$<CONFIG>";
-    }
-    // Per config include directories
-    if (this->MultiConfig) {
-      for (std::string const& cfg : this->ConfigsList) {
-        std::string& dir = this->Dir.ConfigInclude[cfg];
-        dir = this->Dir.Build;
-        dir += "/include_";
-        dir += cfg;
-      }
-    }
-  }
+		// Include directory
+		this->Dir.Include = this->Dir.Build;
+		this->Dir.Include += "/include";
+		if (this->MultiConfig) {
+			this->Dir.Include += "_$<CONFIG>";
+		}
+		// Per config include directories
+		if (this->MultiConfig) {
+			for (std::string const& cfg : this->ConfigsList) {
+				std::string& dir = this->Dir.ConfigInclude[cfg];
+				dir = this->Dir.Build;
+				dir += "/include_";
+				dir += cfg;
+			}
+		}
+	}
 
+	// Moc, Uic and _autogen target settings
+	if (this->Moc.Enabled || this->Uic.Enabled) {
+		// Init moc specific settings
+		if (this->Moc.Enabled && !InitMoc()) {
+			return false;
+		}
 
-  // Autogen target name
-  this->AutogenTarget.Name = this->Target->GetName();
-  this->AutogenTarget.Name += "_autogen";
+		// Init uic specific settings
+		if (this->Uic.Enabled && !InitUic()) {
+			return false;
+		}
 
-  // Autogen target parallel processing
-  this->AutogenTarget.Parallel =
-	  this->Target->GetSafeProperty("AUTOGEN_PARALLEL");
-  if (this->AutogenTarget.Parallel.empty() ||
-	  (this->AutogenTarget.Parallel == "AUTO")) {
-	  // Autodetect number of CPUs
-	  this->AutogenTarget.Parallel = std::to_string(GetParallelCPUCount());
-  }
-  
-  // Autogen target info and settings files
-  {
-    this->AutogenTarget.InfoFile = this->Dir.Info;
-    this->AutogenTarget.InfoFile += "/AutogenInfo.cmake";
+	// Autogen target name
+	this->AutogenTarget.Name = this->Target->GetName();
+	this->AutogenTarget.Name += "_autogen";
 
-    this->AutogenTarget.SettingsFile = this->Dir.Info;
-    this->AutogenTarget.SettingsFile += "/AutogenOldSettings.txt";
+	// Autogen target parallel processing
+	this->AutogenTarget.Parallel =
+		this->Target->GetSafeProperty("AUTOGEN_PARALLEL");
+	if (this->AutogenTarget.Parallel.empty() ||
+		(this->AutogenTarget.Parallel == "AUTO")) {
+		// Autodetect number of CPUs
+		this->AutogenTarget.Parallel = std::to_string(GetParallelCPUCount());
+	}
 
-      if (this->MultiConfig) {
-        for (std::string const& cfg : this->ConfigsList) {
-          std::string& filename = this->AutogenTarget.ConfigSettingsFile[cfg];
-          filename =
-            AppendFilenameSuffix(this->AutogenTarget.SettingsFile, "_" + cfg);
-          AddCleanFile(makefile, filename);
-        }
-      } else {
-        AddCleanFile(makefile, this->AutogenTarget.SettingsFile);
-      }
-  }
+	// Autogen target info and settings files
+	{
+		this->AutogenTarget.InfoFile = this->Dir.Info;
+		this->AutogenTarget.InfoFile += "/AutogenInfo.cmake";
 
-  // Autogen target: Compute user defined dependencies
-  {
-      std::string const deps =
-        this->Target->GetSafeProperty("AUTOGEN_TARGET_DEPENDS");
-      if (!deps.empty()) {
-        std::vector<std::string> extraDeps;
-        cmSystemTools::ExpandListArgument(deps, extraDeps);
-        for (std::string const& depName : extraDeps) {
-          // Allow target and file dependencies
-          auto* depTarget = makefile->FindTargetToUse(depName);
-          if (depTarget != nullptr) {
-			  this->AutogenTarget.DependTargets.insert(depTarget);
-          } else {
-			  this->AutogenTarget.DependFiles.insert(depName);
-          }
-        }
-      }
-  }
+		this->AutogenTarget.SettingsFile = this->Dir.Info;
+		this->AutogenTarget.SettingsFile += "/AutogenOldSettings.txt";
 
-  if (this->Moc.Enabled && !InitMoc()) {
+		if (this->MultiConfig) {
+			for (std::string const& cfg : this->ConfigsList) {
+				std::string& filename = this->AutogenTarget.ConfigSettingsFile[cfg];
+				filename =
+					AppendFilenameSuffix(this->AutogenTarget.SettingsFile, "_" + cfg);
+				AddCleanFile(makefile, filename);
+			}
+		} else {
+			AddCleanFile(makefile, this->AutogenTarget.SettingsFile);
+		}
+	}
+
+	// Autogen target: Compute user defined dependencies
+	{
+		std::string const deps =
+			this->Target->GetSafeProperty("AUTOGEN_TARGET_DEPENDS");
+		if (!deps.empty()) {
+			std::vector<std::string> extraDeps;
+			cmSystemTools::ExpandListArgument(deps, extraDeps);
+			for (std::string const& depName : extraDeps) {
+				// Allow target and file dependencies
+				auto* depTarget = makefile->FindTargetToUse(depName);
+				if (depTarget != nullptr) {
+					this->AutogenTarget.DependTargets.insert(depTarget);
+				} else {
+					this->AutogenTarget.DependFiles.insert(depName);
+				}
+			}
+		}
+	}
+}
+
+  // Init rcc specific settings
+  if (this->Rcc.Enabled && !InitRcc()) {
     return false;
   }
-  if (this->Uic.Enabled && !InitUic()) {
-    return false;
-  }
-  if (this->Uic.Enabled && !InitRcc()) {
-    return false;
+
+  // Add autogen include directory to the origin target INCLUDE_DIRECTORIES
+  if (this->Moc.Enabled || this->Uic.Enabled ||
+	  (this->Rcc.Enabled && this->MultiConfig)) {
+	  this->Target->AddIncludeDirectory(this->Dir.Include, true);
   }
 
   // Create autogen target
@@ -348,13 +361,6 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
       return false;
     }
   }
-
-  // Add autogen includes directory to the origin target INCLUDE_DIRECTORIES
-  if (this->Moc.Enabled || this->Uic.Enabled ||
-      (this->Rcc.Enabled && this->MultiConfig)) {
-    this->Target->AddIncludeDirectory(this->Dir.Include, true);
-  }
-
 
 
   {
