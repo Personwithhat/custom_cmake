@@ -350,6 +350,11 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
 	  this->Target->AddIncludeDirectory(this->Dir.Include, true);
   }
 
+  // Scan files
+  if (!this->InitScanFiles()) {
+	  return false;
+  }
+
   // Create autogen target
   if ((this->Moc.Enabled || this->Uic.Enabled) && !this->InitAutogenTarget()) {
 	  return false;
@@ -357,12 +362,28 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
 
   // Acquire rcc executable and features
   if (this->Rcc.Enabled) {
-    if (!GetRccExecutable()) {
-      return false;
-    }
+	  if (!GetRccExecutable()) {
+		  return false;
+	  }
   }
+	return true;
+}
 
+	
+bool cmQtAutoGenInitializer::InitRcc()
+{
+  if (!GetRccExecutable()) {
+    return false;
+  }
+  return true;
+}
 
+bool cmQtAutoGenInitializer::InitScanFiles()
+{
+  cmMakefile* makefile = this->Target->Target->GetMakefile();
+  cmLocalGenerator* localGen = this->Target->GetLocalGenerator();
+
+  // Scan through target files
   {
     std::string const qrcExt = "qrc";
     std::vector<cmSourceFile*> srcFiles;
@@ -1015,14 +1036,6 @@ bool cmQtAutoGenInitializer::InitUic()
     return false;
   }
 
-  return true;
-}
-
-bool cmQtAutoGenInitializer::InitRcc()
-{
-  if (!GetRccExecutable()) {
-    return false;
-  }
   return true;
 }
 
