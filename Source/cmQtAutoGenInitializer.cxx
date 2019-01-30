@@ -350,14 +350,14 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     this->Target->AddIncludeDirectory(this->Dir.Include, true);
   }
 
-  // Scan files
-  if (!this->InitScanFiles()) {
-    return false;
-  }
-
   // Create autogen target
   if ((this->Moc.Enabled || this->Uic.Enabled) && !this->InitAutogenTarget()) {
     return false;
+  }
+
+  // Scan files
+  if (!this->InitScanFiles()) {
+    return false; 
   }
 
   // Create rcc targets
