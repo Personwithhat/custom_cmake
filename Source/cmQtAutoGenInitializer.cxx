@@ -192,24 +192,21 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
   cmLocalGenerator* localGen = this->Target->GetLocalGenerator();
   cmGlobalGenerator* globalGen = localGen->GetGlobalGenerator();
 
-  // Verbosity
-  {
-    this->Verbosity = makefile->GetSafeDefinition("CMAKE_AUTOGEN_VERBOSE");
-    if (!this->Verbosity.empty()) {
-      unsigned long iVerb = 0;
-      if (!cmSystemTools::StringToULong(this->Verbosity.c_str(), &iVerb)) {
-        // Non numeric verbosity
-        this->Verbosity =
-          cmSystemTools::IsOn(this->Verbosity.c_str()) ? "1" : "0";
-      }
-    }
-  }
-
   // Configurations
   this->MultiConfig = globalGen->IsMultiConfig();
   this->ConfigDefault = makefile->GetConfigurations(this->ConfigsList);
   if (this->ConfigsList.empty()) {
     this->ConfigsList.push_back(this->ConfigDefault);
+  }
+
+  // Verbosity
+  this->Verbosity = makefile->GetSafeDefinition("CMAKE_AUTOGEN_VERBOSE");
+  if (!this->Verbosity.empty()) {
+    unsigned long iVerb = 0;
+    if (!cmSystemTools::StringToULong(this->Verbosity.c_str(), &iVerb)) {
+      // Non numeric verbosity
+      this->Verbosity = cmSystemTools::IsOn(this->Verbosity) ? "1" : "0";
+    }
   }
 
   // Autogen target parallel processing
@@ -225,13 +222,13 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
   this->AutogenTarget.Name = this->Target->GetName();
   this->AutogenTarget.Name += "_autogen";
 
-  // Autogen directories
+  // Common directories
   {
     // Collapsed current binary directory
     std::string const cbd = cmSystemTools::CollapseFullPath(
-      "", makefile->GetCurrentBinaryDirectory());
+      std::string(), makefile->GetCurrentBinaryDirectory());
 
-    // Autogen info dir
+    // Info directory
     this->Dir.Info = cbd;
     this->Dir.Info += makefile->GetCMakeInstance()->GetCMakeFilesDirectory();
     this->Dir.Info += '/';
@@ -239,7 +236,7 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     this->Dir.Info += ".dir";
     cmSystemTools::ConvertToUnixSlashes(this->Dir.Info);
 
-    // Autogen build dir
+    // Build directory
     this->Dir.Build = this->Target->GetSafeProperty("AUTOGEN_BUILD_DIR");
     if (this->Dir.Build.empty()) {
       this->Dir.Build = cbd;
@@ -258,6 +255,7 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     if (this->MultiConfig) {
       this->Dir.Include += "_$<CONFIG>";
     }
+    // Per config include directories
     if (this->MultiConfig) {
       for (std::string const& cfg : this->ConfigsList) {
         std::string& dir = this->Dir.ConfigInclude[cfg];
@@ -407,12 +405,13 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
         }
       }
     }
-    // cmGeneratorTarget::GetConfigCommonSourceFiles computes the target's
-    // sources meta data cache. Clear it so that OBJECT library targets that
-    // are AUTOGEN initialized after this target get their added
-    // mocs_compilation.cpp source acknowledged by this target.
-    this->Target->ClearSourcesCache();
   }
+  // cmGeneratorTarget::GetConfigCommonSourceFiles computes the target's
+  // sources meta data cache. Clear it so that OBJECT library targets that
+  // are AUTOGEN initialized after this target get their added
+  // mocs_compilation.cpp source acknowledged by this target.
+  this->Target->ClearSourcesCache();
+
   // Read skip files from makefile sources
   if (this->Moc.Enabled || this->Uic.Enabled) {
     std::string pathError;
@@ -1138,15 +1137,10 @@ bool cmQtAutoGenInitializer::SetupWriteAutogenInfo()
 
 bool cmQtAutoGenInitializer::SetupWriteRccInfo()
 {
-  cmMakefile* makefile = this->Target->Target->GetMakefile();
-
   for (Qrc const& qrc : this->Rcc.Qrcs) {
-    // Register rcc info file as generated
-    makefile->AddCMakeOutputFile(qrc.InfoFile);
-
     cmGeneratedFileStream ofs;
     ofs.SetCopyIfDifferent(true);
-    ofs.Open(qrc.InfoFile.c_str(), false, true);
+    ofs.Open(qrc.InfoFile, false, true);
     if (ofs) {
       // Utility lambdas
       auto CWrite = [&ofs](const char* key, std::string const& value) {
@@ -1166,24 +1160,13 @@ bool cmQtAutoGenInitializer::SetupWriteRccInfo()
       CWrite("ARCC_MULTI_CONFIG", this->MultiConfig ? "TRUE" : "FALSE");
       CWrite("ARCC_VERBOSITY", this->Verbosity);
       ofs << "# Settings file\n";
-      if (this->MultiConfig) {
-        std::map<std::string, std::string> settingsFiles;
-        for (std::string const& cfg : this->ConfigsList) {
-          settingsFiles[cfg] =
-            AppendFilenameSuffix(qrc.SettingsFile, "_" + cfg);
-        }
-        CWriteMap("ARCC_SETTINGS_FILE", settingsFiles);
-      } else {
-        CWrite("ARCC_SETTINGS_FILE", qrc.SettingsFile);
-      }
+      CWrite("ARCC_SETTINGS_FILE", qrc.SettingsFile);
+      CWriteMap("ARCC_SETTINGS_FILE", qrc.ConfigSettingsFile);
 
       ofs << "# Directories\n";
       CWrite("ARCC_BUILD_DIR", this->Dir.Build);
-      if (this->MultiConfig) {
-        CWriteMap("ARCC_INCLUDE_DIR", this->Dir.ConfigInclude);
-      } else {
-        CWrite("ARCC_INCLUDE_DIR", this->Dir.Include);
-      }
+      CWrite("ARCC_INCLUDE_DIR", this->Dir.Include);
+      CWriteMap("ARCC_INCLUDE_DIR", this->Dir.ConfigInclude);
 
       ofs << "# Rcc executable\n";
       CWrite("ARCC_RCC_EXECUTABLE", this->Rcc.Executable);
@@ -1286,7 +1269,7 @@ bool cmQtAutoGenInitializer::GetMocExecutable()
     std::string targetName;
     if (this->QtVersion.Major == 5) {
       targetName = "Qt5::moc";
-    } else if (QtVersion.Major == 4) {
+    } else if (this->QtVersion.Major == 4) {
       targetName = "Qt4::moc";
     } else {
       err = "The AUTOMOC feature supports only Qt 4 and Qt 5";
@@ -1347,7 +1330,7 @@ bool cmQtAutoGenInitializer::GetUicExecutable()
     std::string targetName;
     if (this->QtVersion.Major == 5) {
       targetName = "Qt5::uic";
-    } else if (QtVersion.Major == 4) {
+    } else if (this->QtVersion.Major == 4) {
       targetName = "Qt4::uic";
     } else {
       err = "The AUTOUIC feature supports only Qt 4 and Qt 5";
@@ -1368,7 +1351,7 @@ bool cmQtAutoGenInitializer::GetUicExecutable()
   }
 
   // Test uic command
-  if (err.empty()) {
+  if (err.empty() && !this->Uic.Executable.empty()) {
     if (cmSystemTools::FileExists(this->Uic.Executable, true)) {
       std::vector<std::string> command;
       command.push_back(this->Uic.Executable);
@@ -1412,7 +1395,7 @@ bool cmQtAutoGenInitializer::GetRccExecutable()
     std::string targetName;
     if (this->QtVersion.Major == 5) {
       targetName = "Qt5::rcc";
-    } else if (QtVersion.Major == 4) {
+    } else if (this->QtVersion.Major == 4) {
       targetName = "Qt4::rcc";
     } else {
       err = "The AUTORCC feature supports only Qt 4 and Qt 5";
