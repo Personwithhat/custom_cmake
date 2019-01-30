@@ -290,19 +290,9 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
 
     this->AutogenTarget.SettingsFile = this->Dir.Info;
     this->AutogenTarget.SettingsFile += "/AutogenOldSettings.txt";
-  }
-
-  std::set<std::string> autogenDependFiles;
-  std::set<cmTarget*> autogenDependTargets;
-  std::vector<std::string> autogenProvides;
 
   // Remove build directories on cleanup
   AddCleanFile(makefile, this->Dir.Build);
-
-  // Remove old settings on cleanup
-  {
-    std::string base = this->Dir.Info;
-    base += "/AutogenOldSettings";
       if (this->MultiConfig) {
         for (std::string const& cfg : this->ConfigsList) {
           std::string& filename = this->AutogenTarget.ConfigSettingsFile[cfg];
@@ -326,9 +316,9 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
           // Allow target and file dependencies
           auto* depTarget = makefile->FindTargetToUse(depName);
           if (depTarget != nullptr) {
-            autogenDependTargets.insert(depTarget);
+			  this->AutogenTarget.DependTargets.insert(depTarget);
           } else {
-            autogenDependFiles.insert(depName);
+			  this->AutogenTarget.DependFiles.insert(depName);
           }
         }
       }
@@ -344,6 +334,11 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     return false;
   }
 
+  // Create autogen target
+  if ((this->Moc.Enabled || this->Uic.Enabled) && !this->InitAutogenTarget()) {
+	  return false;
+  }
+
   // Acquire rcc executable and features
   if (this->Rcc.Enabled) {
     if (!GetRccExecutable()) {
@@ -357,10 +352,6 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     this->Target->AddIncludeDirectory(this->Dir.Include, true);
   }
 
-  if (this->Moc.Enabled) {
-    this->AddGeneratedSource(this->Moc.MocsCompilation, GeneratorT::MOC);
-    autogenProvides.push_back(this->Moc.MocsCompilation);
-  }
 
   // Extract relevant source files
   std::vector<std::string> generatedSources;
@@ -389,13 +380,13 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
             const bool generated = sf->GetPropertyAsBool("GENERATED");
             if (fileType == cmSystemTools::HEADER_FILE_FORMAT) {
               if (generated) {
-                generatedHeaders.push_back(absPath);
+				  this->AutogenTarget.HeadersGenerated.push_back(absPath);
               } else {
                 this->AutogenTarget.Headers.push_back(absPath);
               }
             } else {
               if (generated) {
-                generatedSources.push_back(absPath);
+				  this->AutogenTarget.SourcesGenerated.push_back(absPath);
               } else {
                 this->AutogenTarget.Sources.push_back(absPath);
               }
@@ -468,8 +459,8 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
 	  }
 
 	  // Process GENERATED sources and headers
-	  if (!generatedSources.empty() || 
-		  !generatedHeaders.empty()) {
+	  if (!this->AutogenTarget.SourcesGenerated.empty() ||
+		  !this->AutogenTarget.HeadersGenerated.empty()) {
 		  // Check status of policy CMP0071
 		  bool policyAccept = false;
 		  bool policyWarn = false;
@@ -493,17 +484,16 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
 		  if (policyAccept) {
 			  // Accept GENERATED sources
 			  for (std::string const& absFile : 
-					generatedHeaders) {
+				  this->AutogenTarget.HeadersGenerated) {
 				  this->AutogenTarget.Headers.push_back(absFile);
-				  autogenDependFiles.insert(absFile);
+				  this->AutogenTarget.DependFiles.insert(absFile);
 			  }
 			  for (std::string const& absFile : 
-					generatedSources) {
+				  this->AutogenTarget.SourcesGenerated) {
 				  this->AutogenTarget.Sources.push_back(absFile);
-				  autogenDependFiles.insert(absFile);
+				  this->AutogenTarget.DependFiles.insert(absFile);
 			  }
-		  }
-		  else {
+		  } else {
 			  if (policyWarn) {
 				  std::string msg;
 				  msg += cmPolicies::GetPolicyWarning(cmPolicies::CMP0071);
@@ -523,11 +513,11 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
 				  msg += "For compatibility, CMake is excluding the GENERATED source "
 					  "file(s):\n";
 				  for (const std::string& absFile :
-						generatedHeaders) {
+					  this->AutogenTarget.HeadersGenerated) {
 					  msg.append("  ").append(Quoted(absFile)).append("\n");
 				  }
 				  for (const std::string& absFile : 
-						generatedSources) {
+					  this->AutogenTarget.SourcesGenerated) {
 					  msg.append("  ").append(Quoted(absFile)).append("\n");
 				  }
 				  msg += "from processing by ";
@@ -543,9 +533,6 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
 				  makefile->IssueMessage(cmake::AUTHOR_WARNING, msg);
 			  }
 		  }
-		  // Clear lists
-		  generatedSources.clear();
-		  generatedHeaders.clear();
 	  }
 	  // Sort headers and sources
 	  if (this->Moc.Enabled || this->Uic.Enabled) {
@@ -732,8 +719,24 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     }
   }
 
-  // Create _autogen target
-  if (this->Moc.Enabled || this->Uic.Enabled) {
+  return true;
+}
+
+  bool cmQtAutoGenInitializer::InitAutogenTarget()
+  {
+	  cmMakefile* makefile = this->Target->Target->GetMakefile();
+	  cmLocalGenerator* localGen = this->Target->GetLocalGenerator();
+	  cmGlobalGenerator* globalGen = localGen->GetGlobalGenerator();
+
+	  // Register info file as generated by CMake
+	  makefile->AddCMakeOutputFile(this->AutogenTarget.InfoFile);
+
+	  // Files provided by the autogen target
+	  std::vector<std::string> autogenProvides;
+	  if (this->Moc.Enabled) {
+		  this->AddGeneratedSource(this->Moc.MocsCompilation, GeneratorT::MOC);
+		  autogenProvides.push_back(this->Moc.MocsCompilation);
+	  }
 
     // Compose target comment
     std::string autogenComment;
@@ -778,14 +781,14 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
     // Disable PRE_BUILD in some cases
     if (usePRE_BUILD) {
       // Cannot use PRE_BUILD with file depends
-      if (!autogenDependFiles.empty()) {
+      if (!this->AutogenTarget.DependFiles.empty()) {
         usePRE_BUILD = false;
       }
     }
     // Create the autogen target/command
     if (usePRE_BUILD) {
       // Add additional autogen target dependencies to origin target
-      for (cmTarget* depTarget : autogenDependTargets) {
+      for (cmTarget* depTarget : this->AutogenTarget.DependTargets) {
         this->Target->Target->AddUtility(depTarget->GetName(), makefile);
       }
 
@@ -826,7 +829,7 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
         }
         for (auto const& item : commonTargets) {
           if (item.second == this->ConfigsList.size()) {
-            autogenDependTargets.insert(item.first->Target);
+			  this->AutogenTarget.DependTargets.insert(item.first->Target);
           }
         }
       }
@@ -835,8 +838,8 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
       cmTarget* autogenTarget = makefile->AddUtilityCommand(
         this->AutogenTarget.Name, cmMakefile::TargetOrigin::Generator, true,
         this->Dir.Work.c_str(), /*byproducts=*/autogenProvides,
-        std::vector<std::string>(autogenDependFiles.begin(),
-                                 autogenDependFiles.end()),
+        std::vector<std::string>(this->AutogenTarget.DependFiles.begin(),
+                                 this->AutogenTarget.DependFiles.end()),
         commandLines, false, autogenComment.c_str());
       // Create autogen generator target
       localGen->AddGeneratorTarget(
@@ -847,7 +850,7 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
         autogenTarget->AddUtility(depName, makefile);
       }
       // Add additional autogen target dependencies to autogen target
-      for (cmTarget* depTarget : autogenDependTargets) {
+      for (cmTarget* depTarget : this->AutogenTarget.DependTargets) {
         autogenTarget->AddUtility(depTarget->GetName(), makefile);
       }
 
@@ -859,7 +862,6 @@ bool cmQtAutoGenInitializer::InitCustomTargets()
       // Add autogen target to the origin target dependencies
       this->Target->Target->AddUtility(this->AutogenTarget.Name, makefile);
     }
-  }
 
   return true;
 }
